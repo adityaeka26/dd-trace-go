@@ -7,6 +7,7 @@
 package sarama // import "gopkg.in/DataDog/dd-trace-go.v1/contrib/IBM/sarama"
 
 import (
+	"context"
 	"math"
 
 	"gopkg.in/DataDog/dd-trace-go.v1/ddtrace"
@@ -127,6 +128,13 @@ type syncProducer struct {
 // SendMessage calls sarama.SyncProducer.SendMessage and traces the request.
 func (p *syncProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
 	span := startProducerSpan(p.cfg, p.version, msg)
+	partition, offset, err = p.SyncProducer.SendMessage(msg)
+	finishProducerSpan(span, partition, offset, err)
+	return partition, offset, err
+}
+
+func (p *syncProducer) SendMessageWithContext(msg *sarama.ProducerMessage, ctx context.Context) (partition int32, offset int64, err error) {
+	span := startProducerSpanWithContext(p.cfg, p.version, msg, ctx)
 	partition, offset, err = p.SyncProducer.SendMessage(msg)
 	finishProducerSpan(span, partition, offset, err)
 	return partition, offset, err
@@ -281,6 +289,31 @@ func startProducerSpan(cfg *config, version sarama.KafkaVersion, msg *sarama.Pro
 		opts = append(opts, tracer.ChildOf(spanctx))
 	}
 	span := tracer.StartSpan(cfg.producerSpanName, opts...)
+	if version.IsAtLeast(sarama.V0_11_0_0) {
+		// re-inject the span context so consumers can pick it up
+		tracer.Inject(span.Context(), carrier)
+	}
+	return span
+}
+
+func startProducerSpanWithContext(cfg *config, version sarama.KafkaVersion, msg *sarama.ProducerMessage, ctx context.Context) ddtrace.Span {
+	carrier := NewProducerMessageCarrier(msg)
+	opts := []tracer.StartSpanOption{
+		tracer.ServiceName(cfg.producerServiceName),
+		tracer.ResourceName("Produce Topic " + msg.Topic),
+		tracer.SpanType(ext.SpanTypeMessageProducer),
+		tracer.Tag(ext.Component, componentName),
+		tracer.Tag(ext.SpanKind, ext.SpanKindProducer),
+		tracer.Tag(ext.MessagingSystem, ext.MessagingSystemKafka),
+	}
+	if !math.IsNaN(cfg.analyticsRate) {
+		opts = append(opts, tracer.Tag(ext.EventSampleRate, cfg.analyticsRate))
+	}
+	// if there's a span context in the headers, use that as the parent
+	if spanctx, err := tracer.Extract(carrier); err == nil {
+		opts = append(opts, tracer.ChildOf(spanctx))
+	}
+	span, _ := tracer.StartSpanFromContext(ctx, cfg.producerSpanName, opts...)
 	if version.IsAtLeast(sarama.V0_11_0_0) {
 		// re-inject the span context so consumers can pick it up
 		tracer.Inject(span.Context(), carrier)
