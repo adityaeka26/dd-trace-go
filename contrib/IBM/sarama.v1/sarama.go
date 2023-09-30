@@ -8,6 +8,7 @@ package sarama // import "gopkg.in/DataDog/dd-trace-go.v1/contrib/IBM/sarama"
 
 import (
 	"context"
+	"fmt"
 	"math"
 
 	"gopkg.in/DataDog/dd-trace-go.v1/ddtrace"
@@ -127,6 +128,7 @@ type syncProducer struct {
 
 // SendMessage calls sarama.SyncProducer.SendMessage and traces the request.
 func (p *syncProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
+	fmt.Println("test")
 	span := startProducerSpan(p.cfg, p.version, msg)
 	partition, offset, err = p.SyncProducer.SendMessage(msg)
 	finishProducerSpan(span, partition, offset, err)
